@@ -16,6 +16,8 @@ import gymnasium as gym
 from gym_interface import make_vector_env
 from models import get_model
 from utils import seed_everything, create_result_dir
+from muesli.base_classes import Representation, Dynamics, Prediction
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -263,6 +265,27 @@ elif algorithm == "ppo":
                 action_space=env.action_space,
                 device=device,
                 cfg=cfg_agent)
+    
+elif algorithm == "muesli":
+    from muesli.muesli_agent import MuesliAgent
+
+    obs_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n if hasattr(env.action_space, 'n') else int(np.prod(env.action_space.shape))
+
+    # Initialize model components
+    representation = Representation(input_dim=obs_dim, output_dim=128, width=256).to(device)
+    dynamics       = Dynamics(input_dim=128, output_dim=128, width=256, action_space=action_dim).to(device)
+    prediction     = Prediction(input_dim=128, output_dim=action_dim, width=256).to(device)
+
+    agent = MuesliAgent(
+        env=env,
+        representation=representation,
+        dynamics=dynamics,
+        prediction=prediction,
+        config=config,
+        device=device
+    )
+
 else:
     raise ValueError(f"Unknown algorithm: {config['algorithm']}")
 
@@ -271,5 +294,13 @@ cfg_trainer = {
     "timesteps": config["total_timesteps"],
     "headless": True  # no rendering
 }
-trainer = SequentialTrainer(env=env, agents=agent, cfg=cfg_trainer)
-trainer.train()
+trainer = None
+if algorithm in ["dqn", "ppo"]:
+    trainer = SequentialTrainer(env=env, agents=agent, cfg=cfg_trainer)
+    trainer.train()
+elif algorithm == "muesli":
+    agent.train()
+
+# trainer = SequentialTrainer(env=env, agents=agent, cfg=cfg_trainer)
+# trainer.train()
+
