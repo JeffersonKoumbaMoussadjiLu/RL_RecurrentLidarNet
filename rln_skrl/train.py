@@ -1,5 +1,8 @@
 import os, sys, yaml
 from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -285,6 +288,13 @@ elif algorithm == "muesli":
         config=config,
         device=device
     )
+    torch.save({
+    'representation': representation.state_dict(),
+    'dynamics': dynamics.state_dict(),
+    'prediction': prediction.state_dict()}, os.path.join(results_dir, "muesli_final_model.pth"))
+
+    agent.train()
+
 
 else:
     raise ValueError(f"Unknown algorithm: {config['algorithm']}")

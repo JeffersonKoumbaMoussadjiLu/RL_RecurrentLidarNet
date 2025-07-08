@@ -1,7 +1,7 @@
 experiment_name: "f1tenth_experiment"    # Name for results folder
 
 # Environment settings
-env_id: "f1tenth_gym:f1tenth-v0"         # Gym env ID for F1TENTH simulator
+env_id: "f110_gym:f110-v0"             # Gym env ID for F1TENTH simulator
 map_path: "maps/levine.yaml"             # Track map for the environment
 n_envs: 1                               # Number of parallel environments
 max_episode_steps: 1000                 # Max steps per episode
@@ -26,7 +26,7 @@ reward_weights:
 
 # Model and algorithm
 algorithm: "muesli"                     # Training algorithm: "ppo" (on-policy) or "dqn" (off-policy)
-model_type: "basic_lstm"             # Model architecture: basic_lstm, spatiotemporal_rln, transformer, dueling_transformer, spatiotemp_dueling_transformer
+model_type: "transformer"             # Model architecture: basic_lstm, spatiotemporal_rln, transformer, dueling_transformer, spatiotemp_dueling_transformer
 total_timesteps: 10000000             # Total training timesteps
 seq_len: 4          # frames per state
 num_ranges: 1080    # lidar points per scan
@@ -47,7 +47,7 @@ epsilon_decay: 50000                # Timesteps to decay epsilon linearly
 
 # Logging and output
 wandb:
-  enabled: true
+  enabled: false
   project: "f1tenth-rl"
   run_name: "experiment-test"
 save_interval: 10000                # How often (steps) to save model checkpoints

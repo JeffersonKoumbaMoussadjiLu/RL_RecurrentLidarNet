@@ -1,84 +1,143 @@
 import os
-import gymnasium as gym
 import numpy as np
+import gymnasium as gym
+from f1tenth_gym.f110_gym.envs.f110_env import F110Env
+
+gym.register(
+    id="f1tenth-v0",
+    entry_point="f1tenth_gym.f110_gym.envs.f110_env:F110Env",
+)
+
 from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
 from gymnasium.wrappers import RecordEpisodeStatistics
 from skrl.envs.wrappers.torch import wrap_env
-
 # Custom environment wrapper for F1TENTH gym to handle observation processing, noise, and reward shaping.
 class F110EnvWrapper(gym.Env):
     def __init__(self, config, seed=0):
         super().__init__()
         self.config = config
-        self.seed = seed
-        # Apply domain randomization to dynamics if enabled
-        params = None
+        self.seed   = seed
+
+        self.discrete_actions = None
+        env_kwargs = {
+            "seed":       seed,
+            "model":      "dynamic_ST",
+            "num_agents": 1
+        }
+
+        # if the user specified a map_path, strip its ".yaml" so F110Env can find both .yaml and .png
+        map_path = config.get("map_path", None)
+        if map_path is not None:
+            base, ext = os.path.splitext(map_path)
+            env_kwargs["map"] = base if ext.lower() == ".yaml" else map_path
+
+        # —— vehicle parameters ——  
+        # must include every entry F110Env expects, so start from its defaults
+        default_params = {
+            'mu': 1.0489,   'C_Sf': 4.718,   'C_Sr': 5.4562,
+            'lf': 0.15875,  'lr': 0.17145,  'h': 0.074,
+            'm': 3.74,      'I': 0.04712,
+            's_min': -0.4189, 's_max': 0.4189,
+            'sv_min': -3.2,   'sv_max': 3.2,
+            'v_switch': 7.319, 'a_max': 9.51,
+            'v_min': -5.0,     'v_max': 20.0,
+            'width': 0.31,     'length': 0.58
+        }
+
+        # only patch in the randomized bits
         if config.get("domain_randomization", False):
             rng = np.random.RandomState(seed)
-            params = {
-                'mu': rng.uniform(0.8, 1.2),
+            params = default_params.copy()
+            params.update({
+                'mu':   rng.uniform(0.8, 1.2),
                 'C_Sf': rng.uniform(4.0, 5.5),
                 'C_Sr': rng.uniform(4.0, 5.5),
-                'm': rng.uniform(3.0, 4.5),
-                'I': rng.uniform(0.04, 0.05)
-            }
-        
-        # Create the underlying F1TENTH gym environment
-        env_id = config.get("env_id", "f1tenth_gym:f1tenth-v0")
-        map_path = config.get("map_path", None)
-        self.env = gym.make(env_id, seed=seed, map=map_path, params=params, model='dynamic_ST', num_agents=1)
+                'm':    rng.uniform(3.0, 4.5),
+                'I':    rng.uniform(0.04, 0.05)
+            })
+            env_kwargs["params"] = params
+        # if not randomizing, leave out "params" entirely – F110Env.__init__ will fall back to its own defaults
 
-        # If max_episode_steps is set, (optional) handle termination after that many steps
+        # now import & instantiate the real env
+        from f1tenth_gym.f110_gym.envs.f110_env import F110Env
+        self.env = F110Env(**env_kwargs)
+
+
         self._max_episode_steps = config.get("max_episode_steps", None)
-        self.current_step = 0
+        self.current_step       = 0
 
-        # Determine observation space dimensions
-        lidar_enabled = config["lidar"]["enabled"]
+        lidar_enabled    = config["lidar"]["enabled"]
         lidar_downsample = config["lidar"]["downsample"]
-        full_dim = 1080
-        lidar_dim = 108 if (lidar_enabled and lidar_downsample) else (full_dim if lidar_enabled else 0)
-        state_dim = 1 if config.get("include_velocity_in_obs", True) else 0
-        obs_dim = state_dim + lidar_dim
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+        full_dim         = 1080
+        lidar_dim        = 108 if (lidar_enabled and lidar_downsample) else (full_dim if lidar_enabled else 0)
+        state_dim        = 1 if config.get("include_velocity_in_obs", True) else 0
+        obs_dim          = state_dim + lidar_dim
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim,), dtype=np.float32)
 
-        # Determine action space: continuous for PPO/A2C, discrete for DQN
-        self.discrete_actions = None
-        if config["algorithm"].lower() == "dqn":
-            # Define a discrete action set (steering, velocity pairs) for DQN
+        # for BOTH DQN and Muesli we use the same discrete action set
+        if config["algorithm"].lower() in ["dqn", "muesli"]:
             self.discrete_actions = np.array([
-                [-0.4, 5.0],   # steer left, medium speed
-                [ 0.0, 5.0],   # go straight, medium speed
-                [ 0.4, 5.0],   # steer right, medium speed
-                [ 0.0, 2.0],   # go straight, slow speed
-                [ 0.0, 8.0]    # go straight, fast speed
+                [-0.4, 5.0],
+                [ 0.0, 5.0],
+                [ 0.4, 5.0],
+                [ 0.0, 2.0],
+                [ 0.0, 8.0]
             ], dtype=np.float32)
             self.action_space = gym.spaces.Discrete(len(self.discrete_actions))
         else:
-            # Continuous action space (steering, velocity)
-            self.action_space = self.env.action_space
+            # continuous actions for PPO/A2C
+            sim_params = self.env.sim.params
+            low  = np.array([sim_params['s_min'], sim_params['v_min']], dtype=np.float32)
+            high = np.array([sim_params['s_max'], sim_params['v_max']], dtype=np.float32)
+            self.action_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
 
-        # Sensor noise parameters
+
         noise_cfg = config.get("sensor_noise", {})
         self.lidar_noise_std = noise_cfg.get("lidar", 0.0)
         self.speed_noise_std = noise_cfg.get("speed", 0.0)
 
-        # Variables for tracking last values and cumulative metrics
-        self.last_speed = 0.0
-        self.last_steer = 0.0
-        self.total_abs_speed = 0.0
+        self.last_speed             = 0.0
+        self.last_steer             = 0.0
+        self.total_abs_speed        = 0.0
         self.total_abs_steer_change = 0.0
 
-    def _extract_speed(self, obs):
-        """Extract forward speed from environment observation dict (handles different keys)."""
-        try:
-            return obs['agent_0']['std_state'][3]
-        except (KeyError, IndexError, TypeError):
-            raise RuntimeError("Observation dict does not contain expected keys for speed extraction.")
-        
+
+    def _extract_speed(self, obs: dict) -> float:
+        """
+        Pull out the ego vehicle’s forward speed (m/s) from the raw obs dict.
+
+        Tries, in order:
+        1. The new F110Env format: `linear_vels_x` + `linear_vels_y` + `ego_idx`
+        2. Legacy flat-array style: `std_state`
+        3. Legacy nested style: `obs['agent_0']['std_state']`
+        """
+        # 1) New-style: use linear_vels_x & linear_vels_y
+        if "linear_vels_x" in obs and "linear_vels_y" in obs:
+            vx = np.asarray(obs["linear_vels_x"])
+            vy = np.asarray(obs["linear_vels_y"])
+            idx = int(obs.get("ego_idx", 0))
+            # magnitude of the first (or ego) agent’s velocity
+            return float(np.sqrt(vx[idx]**2 + vy[idx]**2))
+
+        # 2) Flat std_state style
+        if "std_state" in obs:
+            arr = np.asarray(obs["std_state"])
+            # shape (num_agents, state_dim) or (state_dim,)
+            if arr.ndim == 2:
+                return float(arr[0, 3])
+            elif arr.ndim == 1:
+                return float(arr[3])
+
+        # 3) Nested agent_0 style
+        if "agent_0" in obs and isinstance(obs["agent_0"], dict):
+            ss = obs["agent_0"].get("std_state")
+            if ss is not None and len(ss) > 3:
+                return float(ss[3])
+
+        raise RuntimeError(f"Cannot extract speed; obs keys are {list(obs.keys())!r}")
 
 
 
-        
 
     def _extract_lidar(self, obs):
         """Extract LiDAR scan array from observation dict (handles different keys)."""
@@ -88,28 +147,38 @@ class F110EnvWrapper(gym.Env):
         return None
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        """Reset the environment and return initial observation."""
+        """Reset the environment and return (observation, info)."""
+        # reset our step counter
         self.current_step = 0
         if seed is not None:
             self.seed = seed
-        # Forward the reset call to the underlying env
-        kwargs = {}
-        if seed is not None:
-            kwargs["seed"] = seed
-        if options is not None:
-            kwargs["options"] = options
-        result = self.env.reset(**kwargs)
-        obs_dict = result[0] if isinstance(result, tuple) else result
 
-        # Reset tracking variables
-        self.last_speed = 0.0
-        self.last_steer = 0.0
-        self.total_abs_speed = 0.0
+        # build default zero poses for all agents
+        num_agents = getattr(self.env, "num_agents", 1)
+        poses = np.zeros((num_agents, 3), dtype=np.float32)
+
+        # call underlying reset
+        result = self.env.reset(poses)
+
+        # unpack either 4-tuple or 5-tuple
+        if len(result) == 4:
+            obs_dict, reward, done, info = result
+        elif len(result) == 5:
+            obs_dict, reward, terminated, truncated, info = result
+            done = bool(terminated or truncated)
+        else:
+            raise RuntimeError(f"Unexpected reset return shape: {result}")
+
+        # clear any wrapper metrics
+        self.last_speed             = 0.0
+        self.last_steer             = 0.0
+        self.total_abs_speed        = 0.0
         self.total_abs_steer_change = 0.0
 
+        # process and return only the observation and info
         processed_obs = self._process_obs(obs_dict)
-        info = {}
         return processed_obs, info
+
 
     def step(self, action):
         """Step the environment with the given action and return processed observation, reward, done flags, and info."""
