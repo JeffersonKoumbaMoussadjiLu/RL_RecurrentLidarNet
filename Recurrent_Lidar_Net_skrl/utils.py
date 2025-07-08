@@ -535,6 +535,7 @@ class ConfigJSON():
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(self.d, f, ensure_ascii=False, indent=4)
 
+'''
 class ConfigYAML():
     """
     Config class for yaml file
@@ -570,7 +571,39 @@ class ConfigYAML():
                     d_out[key] = d[key]
         with open(filename, 'w+') as ff:
             yaml.dump_all([d_out], ff)
-            
+'''
+####################################################################
+class ConfigYAML:
+    """
+    Config class for YAML file.
+    Able to load and save YAML file to and from a Python object.
+    """
+    def __init__(self) -> None:
+        pass
+
+    def load_file(self, filename):
+        data = yaml.safe_load(Path(filename).read_text())
+        for key, value in data.items():
+            setattr(self, key, value)
+
+    def save_file(self, filename):
+        # Convert object attributes to a dict for YAML dumping
+        obj_dict = {}
+        for key, value in vars(self).items():
+            if isinstance(value, np.ndarray):
+                obj_dict[key] = value.tolist()
+            else:
+                obj_dict[key] = value
+        with open(filename, 'w+') as ff:
+            yaml.safe_dump(obj_dict, ff)
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+    
+####################################################################
             
 class DataProcessor():
     def __init__(self) -> None:

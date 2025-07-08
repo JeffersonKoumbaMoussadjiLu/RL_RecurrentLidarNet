@@ -26,7 +26,7 @@ class F110EnvWrapper(gym.Env):
         # Create the underlying F1TENTH gym environment
         env_id = config.get("env_id", "f1tenth_gym:f1tenth-v0")
         map_path = config.get("map_path", None)
-        self.env = gym.make(env_id, seed=seed, map=map_path, params=params, model='dynamic_ST', num_agents=1)
+        self.env = gym.make(env_id, seed=seed, map=map_path, params=params, model='dynamic_ST', enable_rendering=True, num_agents=1)
 
         # If max_episode_steps is set, (optional) handle termination after that many steps
         self._max_episode_steps = config.get("max_episode_steps", None)
@@ -164,46 +164,51 @@ class F110EnvWrapper(gym.Env):
 
         processed_obs = self._process_obs(obs_dict)
         # If episode ends, add custom metrics to info for logging
+        
+        '''
         if terminated or truncated:
             info_episode = info.get("episode", {})
             info_episode["avg_speed"] = (self.total_abs_speed / self.current_step) if self.current_step > 0 else 0.0
             info_episode["avg_steering_change"] = (self.total_abs_steer_change / self.current_step) if self.current_step > 0 else 0.0
             info["episode"] = info_episode
+        '''
+
+
+        '''
+        if terminated or truncated:
+            info_episode = info.get("episode", {})
+            info_episode["avg_speed"] = (self.total_abs_speed / self.current_step) if self.current_step > 0 else 0.0
+            info_episode["avg_steering_change"] = (self.total_abs_steer_change / self.current_step) if self.current_step > 0 else 0.0
+            info_episode["total_steps"] = self.current_step
+            info_episode["collision"] = collision
+            info_episode["reward"] = reward
+            info_episode["length"] = self.current_step  # total steps in this episode
+            info_episode["return"] = reward * self.current_step  # total reward for the episode
+            info_episode["terminated"] = terminated
+            info_episode["truncated"] = truncated
+
+            # Add episode info to the info dict
+            info["episode"] = info_episode
+        '''
+        
+
+        
+        if terminated or truncated:
+            info["custom_metrics"] = {
+                "avg_speed":  self.total_abs_speed  / self.current_step if self.current_step else 0.0,
+                "avg_steering_change": self.total_abs_steer_change / self.current_step if self.current_step else 0.0,
+                "total_steps": self.current_step,
+                "collision": collision, 
+                "reward": reward,
+                "length": self.current_step,  # total steps in this episode
+                "return": reward * self.current_step,  # total reward for the episode
+                "terminated": terminated,
+                "truncated": truncated
+            }
+        
 
         return processed_obs, reward, terminated, truncated, info
 
-
-    '''
-    def _process_obs(self, obs_dict):
-        """Return a flat vector of length self.observation_space.shape[0]."""
-        target_len = self.observation_space.shape[0]
-        vec        = np.zeros(target_len, dtype=np.float32)   # pre-allocate
-
-        idx = 0
-        # ───── speed ───────────────────────────────────────────────
-        if self.config.get("include_velocity_in_obs", True):
-            speed = self._extract_speed(obs_dict)
-            if self.speed_noise_std > 0:
-                speed += np.random.normal(0, self.speed_noise_std)
-            vec[idx] = speed
-            idx += 1
-
-        # ───── LiDAR ───────────────────────────────────────────────
-        if self.config["lidar"]["enabled"]:
-            scan = self._extract_lidar(obs_dict)
-            if scan is not None:
-                if self.config["lidar"]["downsample"]:
-                    scan = scan[::10]                        # 108 readings if 1080 raw
-                if self.lidar_noise_std > 0:
-                    scan = np.clip(
-                        scan + np.random.normal(0, self.lidar_noise_std, size=scan.shape) * scan,
-                        0.0, np.inf
-                    )
-                scan_len          = min(len(scan), target_len - idx)
-                vec[idx: idx+scan_len] = scan[:scan_len]
-
-        return vec
-    '''
 
     
     def _process_obs(self, obs_dict):
@@ -249,9 +254,10 @@ def make_vector_env(config):
     use_subproc = (num_envs > 1 and os.name != 'nt')  # use subprocesses for parallel envs if not on Windows
     def make_env_fn(rank):
         def _init():
-            env = F110EnvWrapper(config, seed=config.get("seed", 0) + rank)
+            #env = F110EnvWrapper(config, seed=config.get("seed", 0) + rank)
             # Wrap each env to record episode statistics (returns and lengths)
-            return RecordEpisodeStatistics(env)
+            #return RecordEpisodeStatistics(env)
+            return F110EnvWrapper(config, seed=config.get("seed", 0) + rank)
         return _init
     if num_envs == 1:
         env = F110EnvWrapper(config, seed=config.get("seed", 0))

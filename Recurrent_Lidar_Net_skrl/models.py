@@ -26,7 +26,10 @@ def get_model(model_type, obs_dim, action_dim, config):
         
     else:
         base_model = BasicLSTMNet(obs_dim, action_dim)
+
     return base_model
+
+######################################################################################
 
 # LSTM-based network for PPO/A2C (one LSTM layer + actor and critic heads)
 class BasicLSTMNet(nn.Module):

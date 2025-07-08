@@ -2,7 +2,7 @@ experiment_name: "f1tenth_experiment"    # Name for results folder
 
 # Environment settings
 env_id: "f1tenth_gym:f1tenth-v0"         # Gym env ID for F1TENTH simulator
-map_path: "maps/Levine.yaml"             # Track map for the environment
+map_path: "maps/Spielberg.yaml"             # Track map for the environment
 n_envs: 1                               # Number of parallel environments
 max_episode_steps: 1000                 # Max steps per episode
 domain_randomization: true             # Randomize dynamics parameters if true
@@ -26,7 +26,7 @@ reward_weights:
 
 # Model and algorithm
 algorithm: "ppo"                     # Training algorithm: "ppo" (on-policy) or "dqn" (off-policy)
-model_type: "basic_lstm"             # Model architecture: basic_lstm, spatiotemporal_rln, transformer, dueling_transformer, spatiotemp_dueling_transformer
+model_type: "spatiotemporal_rln"             # Model architecture: basic_lstm, spatiotemporal_rln, transformer, dueling_transformer, spatiotemp_dueling_transformer
 total_timesteps: 100000             # Total training timesteps
 seq_len: 4          # frames per state
 num_ranges: 1080    # lidar points per scan
